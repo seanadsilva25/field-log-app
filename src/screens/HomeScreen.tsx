@@ -12,65 +12,87 @@ import {
 } from "react-native";
 
 import * as ImagePicker from "expo-image-picker";
+import NetInfo from "@react-native-community/netinfo";
 
 import { generateSeedLogs } from "../services/seedData";
 import { FieldLog } from "../types/log";
 import { getLogs, saveLogs } from "../services/storage";
 import { syncPendingLogs } from "../services/syncEngine";
-import NetInfo from "@react-native-community/netinfo";
 
 // -----------------------------
 // LOG ITEM
 // -----------------------------
 
-const LogItem = memo(({ item }: { item: FieldLog }) => {
-  let statusText = "";
-  let statusStyle = styles.pending;
+const LogItem = memo(
+  ({
+    item,
+    onRetry,
+  }: {
+    item: FieldLog;
+    onRetry: (logId: string) => void;
+  }) => {
+    let statusText = "";
+    let statusStyle = styles.pending;
 
-  if (item.status === "pending") {
-    statusText = "⟳ Pending Sync";
-    statusStyle = styles.pending;
-  }
+    if (item.status === "pending") {
+      statusText = "⟳ Pending Sync";
+      statusStyle = styles.pending;
+    }
 
-  if (item.status === "synced") {
-    statusText = "✓ Synced";
-    statusStyle = styles.synced;
-  }
+    if (item.status === "synced") {
+      statusText = "✓ Synced";
+      statusStyle = styles.synced;
+    }
 
-  if (item.status === "failed") {
-    statusText = "⚠ Sync Failed";
-    statusStyle = styles.failed;
-  }
+    if (item.status === "failed") {
+      statusText = "⚠ Sync Failed";
+      statusStyle = styles.failed;
+    }
 
-  return (
-    <View style={styles.logCard}>
-      <View style={styles.logHeader}>
-        <Text style={styles.customerName}>
-          {item.customerName}
+    return (
+      <View style={styles.logCard}>
+        <View style={styles.logHeader}>
+          <Text style={styles.customerName}>
+            {item.customerName}
+          </Text>
+
+          <Text style={statusStyle}>
+            {statusText}
+          </Text>
+        </View>
+
+        <Text style={styles.logNotes}>
+          {item.notes}
         </Text>
 
-        <Text style={statusStyle}>
-          {statusText}
+        {item.imageUri && (
+          <Image
+            source={{ uri: item.imageUri }}
+            style={styles.logImage}
+          />
+        )}
+
+        <Text style={styles.time}>
+          {new Date(item.timestamp).toLocaleString()}
         </Text>
+
+        {/* RETRY BUTTON */}
+
+        {item.status === "failed" && (
+          <TouchableOpacity
+            style={styles.retryButton}
+            onPress={() => onRetry(item.id)}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.retryText}>
+              Retry Sync
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
-
-      <Text style={styles.logNotes}>
-        {item.notes}
-      </Text>
-
-      {item.imageUri && (
-        <Image
-          source={{ uri: item.imageUri }}
-          style={styles.logImage}
-        />
-      )}
-
-      <Text style={styles.time}>
-        {new Date(item.timestamp).toLocaleString()}
-      </Text>
-    </View>
-  );
-});
+    );
+  }
+);
 
 // -----------------------------
 // MAIN SCREEN
@@ -79,11 +101,17 @@ const LogItem = memo(({ item }: { item: FieldLog }) => {
 export default function HomeScreen() {
   const [customerName, setCustomerName] = useState("");
   const [notes, setNotes] = useState("");
-  const [imageUri, setImageUri] = useState<string | null>(null);
-  const [offlineMode, setOfflineMode] = useState(false);
+  const [imageUri, setImageUri] =
+    useState<string | null>(null);
 
-  const [logs, setLogs] = useState<FieldLog[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [offlineMode, setOfflineMode] =
+    useState(false);
+
+  const [logs, setLogs] =
+    useState<FieldLog[]>([]);
+
+  const [loading, setLoading] =
+    useState(true);
 
   // -----------------------------
   // LOAD SAVED LOGS
@@ -97,22 +125,34 @@ export default function HomeScreen() {
     try {
       let savedLogs = await getLogs();
 
-      // Add 100 historical logs if not already added
-      const historicalLogs = generateSeedLogs();
+      // Add 100 historical logs
+      // if they do not already exist
 
-      const historicalAlreadyAdded = savedLogs.some(
-        (log) => log.id === "historical-1"
-      );
+      const historicalLogs =
+        generateSeedLogs();
+
+      const historicalAlreadyAdded =
+        savedLogs.some(
+          (log) =>
+            log.id === "historical-1"
+        );
 
       if (!historicalAlreadyAdded) {
-        savedLogs = [...savedLogs, ...historicalLogs];
+        savedLogs = [
+          ...savedLogs,
+          ...historicalLogs,
+        ];
 
         await saveLogs(savedLogs);
       }
 
       setLogs(savedLogs);
+
     } catch (error) {
-      console.log("LOAD ERROR:", error);
+      console.log(
+        "LOAD ERROR:",
+        error
+      );
     } finally {
       setLoading(false);
     }
@@ -123,221 +163,349 @@ export default function HomeScreen() {
   // -----------------------------
 
   useEffect(() => {
-    const unsubscribe = NetInfo.addEventListener(
-      async (state) => {
-        if (state.isConnected && !offlineMode) {
-          console.log(
-            "Internet available → checking pending logs"
-          );
+    const unsubscribe =
+      NetInfo.addEventListener(
+        async (state) => {
 
-          try {
-            await syncPendingLogs();
-
-            const updatedLogs = await getLogs();
-
-            setLogs(updatedLogs);
-          } catch (error) {
+          if (
+            state.isConnected &&
+            !offlineMode
+          ) {
             console.log(
-              "AUTO SYNC ERROR:",
-              error
+              "Internet available → checking pending logs"
             );
+
+            try {
+              await syncPendingLogs();
+
+              const updatedLogs =
+                await getLogs();
+
+              setLogs(updatedLogs);
+
+            } catch (error) {
+              console.log(
+                "AUTO SYNC ERROR:",
+                error
+              );
+            }
           }
         }
-      }
-    );
+      );
 
     return () => unsubscribe();
+
   }, [offlineMode]);
 
   // -----------------------------
   // OFFLINE TOGGLE
   // -----------------------------
 
-  const handleOfflineToggle = async () => {
-    const newOfflineMode = !offlineMode;
+  const handleOfflineToggle =
+    async () => {
 
-    setOfflineMode(newOfflineMode);
+      const newOfflineMode =
+        !offlineMode;
 
-    console.log(
-      "Offline Mode:",
-      newOfflineMode ? "ON" : "OFF"
-    );
+      setOfflineMode(
+        newOfflineMode
+      );
 
-    // Turning OFF Offline Mode
-    // triggers synchronization
+      console.log(
+        "Offline Mode:",
+        newOfflineMode
+          ? "ON"
+          : "OFF"
+      );
 
-    if (!newOfflineMode) {
-      try {
-        console.log(
-          "Offline Mode OFF → Starting sync"
-        );
+      // Turning OFF Offline Mode
+      // starts synchronization
 
-        await syncPendingLogs();
+      if (!newOfflineMode) {
+        try {
 
-        const updatedLogs = await getLogs();
+          console.log(
+            "Offline Mode OFF → Starting sync"
+          );
 
-        setLogs(updatedLogs);
-      } catch (error) {
-        console.log(
-          "SYNC ERROR:",
-          error
-        );
+          await syncPendingLogs();
 
-        Alert.alert(
-          "Sync Failed",
-          "Could not synchronize pending logs."
-        );
+          const updatedLogs =
+            await getLogs();
+
+          setLogs(updatedLogs);
+
+        } catch (error) {
+
+          console.log(
+            "SYNC ERROR:",
+            error
+          );
+
+          Alert.alert(
+            "Sync Failed",
+            "Could not synchronize pending logs."
+          );
+        }
       }
-    }
-  };
+    };
 
   // -----------------------------
   // IMAGE PICKER
   // -----------------------------
 
-  const handlePickImage = async () => {
-    try {
-      const permission =
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
+  const handlePickImage =
+    async () => {
 
-      if (!permission.granted) {
-        Alert.alert(
-          "Permission Required",
-          "Please allow access to your photos."
+      try {
+
+        const permission =
+          await ImagePicker
+            .requestMediaLibraryPermissionsAsync();
+
+        if (!permission.granted) {
+
+          Alert.alert(
+            "Permission Required",
+            "Please allow access to your photos."
+          );
+
+          return;
+        }
+
+        const result =
+          await ImagePicker
+            .launchImageLibraryAsync({
+              mediaTypes: ["images"],
+              allowsEditing: true,
+              quality: 0.8,
+            });
+
+        if (!result.canceled) {
+
+          const selectedImage =
+            result.assets[0].uri;
+
+          setImageUri(
+            selectedImage
+          );
+        }
+
+      } catch (error) {
+
+        console.log(
+          "IMAGE PICKER ERROR:",
+          error
         );
 
-        return;
+        Alert.alert(
+          "Image Error",
+          "Could not select the image."
+        );
       }
+    };
 
-      const result =
-        await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ["images"],
-          allowsEditing: true,
-          quality: 0.8,
-        });
+  // -----------------------------
+  // RETRY FAILED LOG
+  // -----------------------------
 
-      if (!result.canceled) {
-        const selectedImage =
-          result.assets[0].uri;
+  const handleRetry =
+    async (logId: string) => {
 
-        setImageUri(selectedImage);
+      try {
+
+        console.log(
+          "RETRYING LOG:",
+          logId
+        );
+
+        const currentLogs =
+          await getLogs();
+
+        // Change failed → pending
+
+        const retryLogs =
+          currentLogs.map(
+            (log) =>
+              log.id === logId
+                ? {
+                    ...log,
+                    status:
+                      "pending" as const,
+                  }
+                : log
+          );
+
+        await saveLogs(
+          retryLogs
+        );
+
+        setLogs(
+          retryLogs
+        );
+
+        // Attempt synchronization
+
+        await syncPendingLogs();
+
+        const updatedLogs =
+          await getLogs();
+
+        setLogs(
+          updatedLogs
+        );
+
+      } catch (error) {
+
+        console.log(
+          "RETRY ERROR:",
+          error
+        );
+
+        Alert.alert(
+          "Retry Failed",
+          "Could not synchronize the log."
+        );
       }
-    } catch (error) {
-      console.log(
-        "IMAGE PICKER ERROR:",
-        error
-      );
-
-      Alert.alert(
-        "Image Error",
-        "Could not select the image."
-      );
-    }
-  };
+    };
 
   // -----------------------------
   // SUBMIT LOG
   // -----------------------------
 
-  const handleSubmit = async () => {
-    console.log("SUBMIT PRESSED");
+  const handleSubmit =
+    async () => {
 
-    if (customerName.trim() === "") {
-      Alert.alert(
-        "Missing Information",
-        "Please enter a customer name."
-      );
-
-      return;
-    }
-
-    if (notes.trim() === "") {
-      Alert.alert(
-        "Missing Information",
-        "Please enter log notes."
-      );
-
-      return;
-    }
-
-    const newLog: FieldLog = {
-      id: `log-${Date.now()}`,
-
-      customerName:
-        customerName.trim(),
-
-      notes:
-        notes.trim(),
-
-      timestamp:
-        new Date().toISOString(),
-
-      imageUri: imageUri,
-
-      status: "pending",
-    };
-
-    try {
-      // Save locally FIRST
-      const updatedLogs = [
-        newLog,
-        ...logs,
-      ];
-
-      await saveLogs(updatedLogs);
-
-      setLogs(updatedLogs);
-
-      // Clear form
-      setCustomerName("");
-      setNotes("");
-      setImageUri(null);
-
-      Alert.alert(
-        "Log Saved",
-        offlineMode
-          ? "Saved locally. Status: Pending Sync."
-          : "Saved locally. Synchronization will be attempted."
-      );
-
-      // If online, synchronize immediately
-      if (!offlineMode) {
-        const networkState =
-          await NetInfo.fetch();
-
-        if (networkState.isConnected) {
-          await syncPendingLogs();
-
-          const syncedLogs =
-            await getLogs();
-
-          setLogs(syncedLogs);
-        }
-      }
-    } catch (error) {
       console.log(
-        "SAVE ERROR:",
-        error
+        "SUBMIT PRESSED"
       );
 
-      Alert.alert(
-        "Error",
-        "Failed to save the log."
-      );
-    }
-  };
+      if (
+        customerName.trim() === ""
+      ) {
+
+        Alert.alert(
+          "Missing Information",
+          "Please enter a customer name."
+        );
+
+        return;
+      }
+
+      if (
+        notes.trim() === ""
+      ) {
+
+        Alert.alert(
+          "Missing Information",
+          "Please enter log notes."
+        );
+
+        return;
+      }
+
+      const newLog: FieldLog = {
+
+        id:
+          `log-${Date.now()}`,
+
+        customerName:
+          customerName.trim(),
+
+        notes:
+          notes.trim(),
+
+        timestamp:
+          new Date().toISOString(),
+
+        imageUri:
+          imageUri,
+
+        status:
+          "pending",
+      };
+
+      try {
+
+        // SAVE LOCALLY FIRST
+
+        const updatedLogs = [
+          newLog,
+          ...logs,
+        ];
+
+        await saveLogs(
+          updatedLogs
+        );
+
+        setLogs(
+          updatedLogs
+        );
+
+        // Clear form
+
+        setCustomerName("");
+        setNotes("");
+        setImageUri(null);
+
+        Alert.alert(
+          "Log Saved",
+
+          offlineMode
+            ? "Saved locally. Status: Pending Sync."
+            : "Saved locally. Synchronization will be attempted."
+        );
+
+        // If online,
+        // synchronize immediately
+
+        if (!offlineMode) {
+
+          const networkState =
+            await NetInfo.fetch();
+
+          if (
+            networkState.isConnected
+          ) {
+
+            await syncPendingLogs();
+
+            const syncedLogs =
+              await getLogs();
+
+            setLogs(
+              syncedLogs
+            );
+          }
+        }
+
+      } catch (error) {
+
+        console.log(
+          "SAVE ERROR:",
+          error
+        );
+
+        Alert.alert(
+          "Error",
+          "Failed to save the log."
+        );
+      }
+    };
 
   // -----------------------------
   // HEADER / FORM
   // -----------------------------
 
   const renderHeader = () => {
+
     return (
       <View>
 
         {/* HEADER */}
 
         <View style={styles.header}>
+
           <Text style={styles.title}>
             Field Logs
           </Text>
@@ -345,21 +513,33 @@ export default function HomeScreen() {
           <Text style={styles.subtitle}>
             Offline-first customer logging
           </Text>
+
         </View>
 
         {/* OFFLINE MODE */}
 
         <View style={styles.offlineCard}>
+
           <View>
-            <Text style={styles.offlineTitle}>
+
+            <Text
+              style={
+                styles.offlineTitle
+              }
+            >
               Offline Mode
             </Text>
 
-            <Text style={styles.offlineText}>
+            <Text
+              style={
+                styles.offlineText
+              }
+            >
               {offlineMode
                 ? "Forced Offline"
                 : "Network Mode"}
             </Text>
+
           </View>
 
           <TouchableOpacity
@@ -373,6 +553,7 @@ export default function HomeScreen() {
             }
             activeOpacity={0.7}
           >
+
             <View
               style={[
                 styles.toggleCircle,
@@ -380,13 +561,20 @@ export default function HomeScreen() {
                   styles.toggleCircleOn,
               ]}
             />
+
           </TouchableOpacity>
+
         </View>
 
         {/* FORM */}
 
         <View style={styles.formCard}>
-          <Text style={styles.formTitle}>
+
+          <Text
+            style={
+              styles.formTitle
+            }
+          >
             New Customer Log
           </Text>
 
@@ -415,7 +603,9 @@ export default function HomeScreen() {
           </Text>
 
           <TextInput
-            style={styles.notesInput}
+            style={
+              styles.notesInput
+            }
             placeholder="Enter your notes"
             placeholderTextColor="#9CA3AF"
             value={notes}
@@ -432,39 +622,68 @@ export default function HomeScreen() {
             Timestamp
           </Text>
 
-          <View style={styles.timestamp}>
-            <Text style={styles.timestampText}>
-              {new Date().toLocaleString()}
+          <View
+            style={
+              styles.timestamp
+            }
+          >
+
+            <Text
+              style={
+                styles.timestampText
+              }
+            >
+              {new Date()
+                .toLocaleString()}
             </Text>
+
           </View>
 
           {/* IMAGE BUTTON */}
 
           <TouchableOpacity
-            style={styles.imageButton}
-            onPress={handlePickImage}
+            style={
+              styles.imageButton
+            }
+            onPress={
+              handlePickImage
+            }
             activeOpacity={0.7}
           >
-            <Text style={styles.imageText}>
+
+            <Text
+              style={
+                styles.imageText
+              }
+            >
               📷 Add Image (Optional)
             </Text>
+
           </TouchableOpacity>
 
           {/* IMAGE PREVIEW */}
 
           {imageUri && (
             <View>
+
               <Image
-                source={{ uri: imageUri }}
-                style={styles.previewImage}
+                source={{
+                  uri: imageUri,
+                }}
+                style={
+                  styles.previewImage
+                }
               />
 
               <TouchableOpacity
-                style={styles.removeImageButton}
+                style={
+                  styles.removeImageButton
+                }
                 onPress={() =>
                   setImageUri(null)
                 }
               >
+
                 <Text
                   style={
                     styles.removeImageText
@@ -472,28 +691,46 @@ export default function HomeScreen() {
                 >
                   Remove Image
                 </Text>
+
               </TouchableOpacity>
+
             </View>
           )}
 
           {/* SUBMIT */}
 
           <TouchableOpacity
-            style={styles.submitButton}
-            onPress={handleSubmit}
+            style={
+              styles.submitButton
+            }
+            onPress={
+              handleSubmit
+            }
             activeOpacity={0.7}
           >
-            <Text style={styles.submitText}>
+
+            <Text
+              style={
+                styles.submitText
+              }
+            >
               Submit Log
             </Text>
+
           </TouchableOpacity>
+
         </View>
 
         {/* RECENT LOGS */}
 
-        <Text style={styles.logsTitle}>
+        <Text
+          style={
+            styles.logsTitle
+          }
+        >
           Recent Logs
         </Text>
+
       </View>
     );
   };
@@ -503,16 +740,26 @@ export default function HomeScreen() {
   // -----------------------------
 
   const renderEmpty = () => {
+
     if (loading) {
+
       return (
-        <Text style={styles.message}>
+        <Text
+          style={
+            styles.message
+          }
+        >
           Loading logs...
         </Text>
       );
     }
 
     return (
-      <Text style={styles.message}>
+      <Text
+        style={
+          styles.message
+        }
+      >
         No logs yet
       </Text>
     );
@@ -523,15 +770,24 @@ export default function HomeScreen() {
   // -----------------------------
 
   const getItemLayout = (
-    _data: ArrayLike<FieldLog> | null | undefined,
+    _data:
+      ArrayLike<FieldLog> |
+      null |
+      undefined,
+
     index: number
   ) => {
+
     const ITEM_HEIGHT = 92;
 
     return {
-      length: ITEM_HEIGHT,
+
+      length:
+        ITEM_HEIGHT,
+
       offset:
         ITEM_HEIGHT * index,
+
       index,
     };
   };
@@ -541,19 +797,36 @@ export default function HomeScreen() {
   // -----------------------------
 
   return (
+
     <SafeAreaView
-      style={styles.container}
+      style={
+        styles.container
+      }
     >
+
       <FlatList
+
         data={logs}
 
         renderItem={({ item }) => (
-          <LogItem item={item} />
+          <LogItem
+            item={item}
+            onRetry={
+              handleRetry
+            }
+          />
         )}
 
         keyExtractor={(item) =>
           item.id
         }
+
+        /*
+         * Important:
+         * Calling renderHeader()
+         * prevents the TextInputs
+         * from remounting while typing.
+         */
 
         ListHeaderComponent={
           renderHeader()
@@ -580,7 +853,9 @@ export default function HomeScreen() {
         contentContainerStyle={
           styles.list
         }
+
       />
+
     </SafeAreaView>
   );
 }
@@ -590,6 +865,7 @@ export default function HomeScreen() {
 // -----------------------------
 
 const styles = StyleSheet.create({
+
   container: {
     flex: 1,
     backgroundColor: "#F5F7FA",
@@ -623,9 +899,13 @@ const styles = StyleSheet.create({
     padding: 14,
     backgroundColor: "#FFFFFF",
     borderRadius: 12,
+
     flexDirection: "row",
+
     alignItems: "center",
-    justifyContent: "space-between",
+
+    justifyContent:
+      "space-between",
   },
 
   offlineTitle: {
@@ -690,32 +970,51 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#D1D5DB",
     borderRadius: 8,
+
     paddingHorizontal: 12,
+
     marginBottom: 12,
+
     fontSize: 15,
+
     color: "#111827",
+
     backgroundColor: "#FFFFFF",
   },
 
   notesInput: {
     height: 80,
+
     borderWidth: 1,
+
     borderColor: "#D1D5DB",
+
     borderRadius: 8,
+
     paddingHorizontal: 12,
+
     paddingTop: 10,
+
     marginBottom: 12,
+
     fontSize: 15,
+
     color: "#111827",
+
     backgroundColor: "#FFFFFF",
   },
 
   timestamp: {
     height: 40,
+
     backgroundColor: "#F3F4F6",
+
     borderRadius: 8,
+
     justifyContent: "center",
+
     paddingHorizontal: 12,
+
     marginBottom: 12,
   },
 
@@ -726,17 +1025,25 @@ const styles = StyleSheet.create({
 
   imageButton: {
     height: 42,
+
     borderWidth: 1,
+
     borderColor: "#D1D5DB",
+
     borderRadius: 8,
+
     justifyContent: "center",
+
     alignItems: "center",
+
     marginBottom: 12,
   },
 
   imageText: {
     fontSize: 14,
+
     fontWeight: "600",
+
     color: "#374151",
   },
 
@@ -760,69 +1067,98 @@ const styles = StyleSheet.create({
 
   submitButton: {
     height: 46,
+
     backgroundColor: "#2563EB",
+
     borderRadius: 8,
+
     justifyContent: "center",
+
     alignItems: "center",
   },
 
   submitText: {
     color: "#FFFFFF",
+
     fontSize: 16,
+
     fontWeight: "700",
   },
 
   logsTitle: {
     marginHorizontal: 20,
+
     marginTop: 16,
+
     marginBottom: 8,
+
     fontSize: 19,
+
     fontWeight: "700",
+
     color: "#111827",
   },
 
   logCard: {
     marginHorizontal: 20,
+
     backgroundColor: "#FFFFFF",
+
     padding: 14,
+
     borderRadius: 10,
+
     marginBottom: 8,
+
     minHeight: 84,
   },
 
   logHeader: {
     flexDirection: "row",
-    justifyContent: "space-between",
+
+    justifyContent:
+      "space-between",
   },
 
   customerName: {
     flex: 1,
+
     fontSize: 15,
+
     fontWeight: "700",
+
     color: "#111827",
   },
 
   pending: {
     fontSize: 11,
+
     fontWeight: "600",
+
     color: "#D97706",
   },
 
   synced: {
     fontSize: 11,
+
     fontWeight: "600",
+
     color: "#16A34A",
   },
 
   failed: {
     fontSize: 11,
+
     fontWeight: "600",
+
     color: "#DC2626",
   },
 
   logNotes: {
     marginTop: 6,
+
     fontSize: 13,
+
     color: "#4B5563",
   },
 
@@ -835,15 +1171,43 @@ const styles = StyleSheet.create({
 
   time: {
     marginTop: 6,
+
     fontSize: 10,
+
     color: "#9CA3AF",
+  },
+
+  retryButton: {
+    marginTop: 10,
+
+    paddingVertical: 8,
+
+    paddingHorizontal: 12,
+
+    borderRadius: 6,
+
+    backgroundColor: "#DC2626",
+
+    alignSelf: "flex-start",
+  },
+
+  retryText: {
+    color: "#FFFFFF",
+
+    fontSize: 12,
+
+    fontWeight: "700",
   },
 
   message: {
     marginHorizontal: 20,
+
     color: "#9CA3AF",
+
     textAlign: "center",
+
     marginTop: 15,
+
     marginBottom: 20,
   },
 });

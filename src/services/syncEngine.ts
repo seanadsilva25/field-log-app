@@ -6,8 +6,6 @@ export const syncPendingLogs = async (): Promise<void> => {
 
   const logs = await getLogs();
 
-  console.log("ALL LOGS:", logs);
-
   const pendingLogs = logs
     .filter((log) => log.status === "pending")
     .sort(
@@ -45,13 +43,32 @@ export const syncPendingLogs = async (): Promise<void> => {
         "SUCCESS:",
         log.customerName
       );
+
     } catch (error) {
+
       console.log(
         "FAILED:",
         log.customerName,
         error
       );
 
+      // Mark this particular log as failed
+      const currentLogs = await getLogs();
+
+      const failedLogs = currentLogs.map(
+        (currentLog) =>
+          currentLog.id === log.id
+            ? {
+                ...currentLog,
+                status: "failed" as const,
+              }
+            : currentLog
+      );
+
+      await saveLogs(failedLogs);
+
+      // Stop here so FIFO order is preserved.
+      // The failed log can be retried later.
       break;
     }
   }
